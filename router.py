@@ -137,9 +137,12 @@ class Router:
     def _cli_loop(self):
         while self._running.is_set():
             try:
-                cmd = self.cli_q.get_nowait()
+                cmd = self.cli_q.get(timeout=0.1)
             except queue.Empty:
-                cmd = input("> ").strip()
+                try:
+                    cmd = input("> ").strip()
+                except:
+                    cmd = "quit"
             self._exec_cmd(cmd)
 
     def _exec_cmd(self, cmd: str):

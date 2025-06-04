@@ -3,6 +3,7 @@
 import argparse
 import json
 import queue
+import random
 import socket
 import sys
 import threading
@@ -27,6 +28,15 @@ def mk_update(src: str, dst: str, distances: Dict[str, int]) -> Dict[str, Any]:
 
 def mk_trace(src: str, dst: str, routers: List[str]) -> Dict[str, Any]:
     return {"type": "trace", "source": src, "destination": dst, "routers": routers}
+
+def mk_control(src: str, dst: str, reason: str, original: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "type": "control",
+        "source": src,
+        "destination": dst,
+        "reason": reason,
+        "original": original,
+    }
 
 class Neighbor:
     def __init__(self, weight: int):
@@ -65,34 +75,52 @@ class LinkTable:
 class RoutingTable:
 
     def __init__(self, my_ip: str):
-        self._routes: Dict[str, tuple[str, int]] = {my_ip: (my_ip, 0)}
+        self._routes: Dict[str, tuple[int, set[str]]] = {my_ip: (0, {my_ip})}
 
     def next_hop(self, dst: str) -> Optional[str]:
         e = self._routes.get(dst)
-        return e[0] if e else None
+        if not e:
+            return None
+        dist, hops = e
+        return random.choice(tuple(hops))
 
     def distance(self, dst: str) -> Optional[int]:
         e = self._routes.get(dst)
-        return e[1] if e else None
+        return e[0] if e else None
 
     def export(self, to_neighbor: str) -> Dict[str, int]:
-        # Split Horizon: omite rotas aprendidas via próprio vizinho
-        return {d: dist for d, (nh, dist) in self._routes.items() if nh != to_neighbor}
+        res: Dict[str, int] = {}
+        for d, (cost, hops) in self._routes.items():
+            if to_neighbor not in hops:  # Split Horizon
+                res[d] = cost
+        return res
 
     def learn_neighbor_vector(self, nbr: str, w_nbr: int, vector: Dict[str, int]) -> None:
         for dst, d_via_nbr in vector.items():
             total = w_nbr + d_via_nbr
             cur = self._routes.get(dst)
-            if cur is None or total < cur[1]:
-                self._routes[dst] = (nbr, total)
+            if cur is None or total < cur[0]:
+                self._routes[dst] = (total, {nbr})
+            elif total == cur[0]:
+                cur[1].add(nbr)
+        for dst, (cost, hops) in list(self._routes.items()):
+            if nbr in hops and dst in vector:
+                new_cost = w_nbr + vector[dst]
+                if new_cost > cost:
+                    hops.discard(nbr)
+                    if not hops:
+                        self._routes.pop(dst)
 
     def purge_hop(self, broken_nh: str) -> None:
-        doomed = [dst for dst, (nh, _) in self._routes.items() if nh == broken_nh]
-        for dst in doomed:
-            self._routes.pop(dst, None)
+        for dst in list(self._routes.keys()):
+            cost, hops = self._routes[dst]
+            if broken_nh in hops:
+                hops.discard(broken_nh)
+                if not hops:
+                    self._routes.pop(dst)
 
     def add_direct(self, neighbor_ip: str, weight: int) -> None:
-        self._routes[neighbor_ip] = (neighbor_ip, weight)
+        self._routes[neighbor_ip] = (weight, {neighbor_ip})
 
 class Router:
     def __init__(self, my_ip: str, period: float):
@@ -141,7 +169,7 @@ class Router:
             except queue.Empty:
                 try:
                     cmd = input("> ").strip()
-                except:
+                except EOFError:
                     cmd = "quit"
             self._exec_cmd(cmd)
 
@@ -163,7 +191,7 @@ class Router:
             case "trace" if len(parts) == 2:
                 dst = parts[1]
                 t = mk_trace(self.my_ip, dst, [self.my_ip])
-                self._forward_or_drop(t)
+                self._forward_or_notify(t)
             case "quit":
                 self.shutdown()
             case "show":
@@ -179,19 +207,20 @@ class Router:
             self._handle_data(msg)
         elif t == "trace":
             self._handle_trace(msg)
+        elif t == "control":
+            self._handle_control(msg)
 
     def _handle_update(self, msg: Dict[str, Any], src_ip: str):
         self.links.touch(src_ip)
         w = self.links.weight(src_ip)
-        if w is None:
-            return
-        self.rt.learn_neighbor_vector(src_ip, w, msg["distances"])
+        if w is not None:
+            self.rt.learn_neighbor_vector(src_ip, w, msg["distances"])
 
     def _handle_data(self, msg: Dict[str, Any]):
         if msg["destination"] == self.my_ip:
             print(msg["payload"])
         else:
-            self._forward_or_drop(msg)
+            self._forward_or_notify(msg)
 
     def _handle_trace(self, msg: Dict[str, Any]):
         msg["routers"].append(self.my_ip)
@@ -199,12 +228,28 @@ class Router:
             reply = mk_data(self.my_ip, msg["source"], json.dumps(msg))
             self._send(reply, msg["source"])
         else:
-            self._forward_or_drop(msg)
+            self._forward_or_notify(msg)
+    
+    def _handle_control(self, msg: Dict[str, Any]):
+        if msg["destination"] == self.my_ip:
+            print(f"[CONTROL] {msg['reason']} -> pacote {msg['original']}")
+        else:
+            self._forward_or_notify(msg)
 
-    def _forward_or_drop(self, msg: Dict[str, Any]):
+    def _forward_or_notify(self, msg: Dict[str, Any]):
         nh = self.rt.next_hop(msg["destination"])
         if nh:
             self._send(msg, nh)
+        else:
+            ctrl = mk_control(
+                self.my_ip,
+                msg["source"],
+                "unreachable",
+                msg,
+            )
+            back = self.rt.next_hop(ctrl["destination"])
+            if back:
+                self._send(ctrl, back)
 
     def _send(self, msg: Dict[str, Any], target_ip: str):
         try:

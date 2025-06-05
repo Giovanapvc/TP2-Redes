@@ -182,12 +182,12 @@ class Router:
                 ip, w = parts[1], int(parts[2])
                 self.links.add(ip, w)
                 self.rt.add_direct(ip, w)
-                print(f"[+] link {ip}/{w}")
+                print(f"+ link {ip}/{w}")
             case "del" if len(parts) == 2:
                 ip = parts[1]
                 self.links.remove(ip)
                 self.rt.purge_hop(ip)
-                print(f"[-] link {ip}")
+                print(f"- link {ip}")
             case "trace" if len(parts) == 2:
                 dst = parts[1]
                 t = mk_trace(self.my_ip, dst, [self.my_ip])
@@ -197,7 +197,7 @@ class Router:
             case "show":
                 print(self.rt._routes)
             case _:
-                print("Comandos: add <ip> <w>, del <ip>, trace <ip>, quit")
+                print("Commands: add <ip> <w>, del <ip>, trace <ip>, quit")
 
     def _dispatch(self, msg: Dict[str, Any], src_ip: str):
         t = msg.get("type")

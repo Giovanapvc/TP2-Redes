@@ -150,7 +150,7 @@ class Router:
                 msg = jload(raw)
                 self._dispatch(msg, src_ip)
             except Exception as e:
-                print("[listener] erro:", e, file=sys.stderr)
+                print("[listener] error:", e, file=sys.stderr)
 
     def _update_loop(self):
         while self._running.is_set():
@@ -182,12 +182,12 @@ class Router:
                 ip, w = parts[1], int(parts[2])
                 self.links.add(ip, w)
                 self.rt.add_direct(ip, w)
-                print(f"[+] link {ip}/{w}")
+                print(f"+ link {ip}/{w}")
             case "del" if len(parts) == 2:
                 ip = parts[1]
                 self.links.remove(ip)
                 self.rt.purge_hop(ip)
-                print(f"[-] link {ip}")
+                print(f"- link {ip}")
             case "trace" if len(parts) == 2:
                 dst = parts[1]
                 t = mk_trace(self.my_ip, dst, [self.my_ip])
@@ -197,7 +197,7 @@ class Router:
             case "show":
                 print(self.rt._routes)
             case _:
-                print("Comandos: add <ip> <w>, del <ip>, trace <ip>, quit")
+                print("Commands: add <ip> <w>, del <ip>, trace <ip>, quit")
 
     def _dispatch(self, msg: Dict[str, Any], src_ip: str):
         t = msg.get("type")
@@ -232,7 +232,7 @@ class Router:
     
     def _handle_control(self, msg: Dict[str, Any]):
         if msg["destination"] == self.my_ip:
-            print(f"[CONTROL] {msg['reason']} -> pacote {msg['original']}")
+            print(f"[CONTROL] {msg['reason']} -> message {msg['original']}")
         else:
             self._forward_or_notify(msg)
 
@@ -255,18 +255,18 @@ class Router:
         try:
             self.sock.sendto(jdump(msg), (target_ip, UDP_PORT))
         except OSError as e:
-            print(f"[send] falhou p/ {target_ip}:", e, file=sys.stderr)
+            print(f"send failed to {target_ip}:", e, file=sys.stderr)
 
     def shutdown(self):
         self._running.clear()
         self.sock.close()
-        print("[x] router encerrado")
+        print("x router closed")
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="UDPRIP router (arquivo único)")
+    p = argparse.ArgumentParser(description="UDPRIP router (archive)")
     p.add_argument("address")
     p.add_argument("period", type=float)
-    p.add_argument("startup", nargs="?", help="arquivo opcional de startup")
+    p.add_argument("startup", nargs="?", help="optional startup archive")
     return p.parse_args()
 
 def main():
